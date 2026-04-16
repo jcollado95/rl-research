@@ -84,7 +84,7 @@ def parse_args():
         help="Número total de pasos de entrenamiento",
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-6,
+        "--lr", type=float, default=5e-6,
         help="Learning rate del optimizador",
     )
     parser.add_argument(
@@ -112,10 +112,11 @@ def parse_args():
         help="Valor máximo de la norma del gradiente",
     )
     parser.add_argument(
-        "--kl_coeff", type=float, default=0.1,
+        "--kl_coeff", type=float, default=0.0,
         help=(
-            "Coeficiente β de penalización KL. Controla cuánto puede "
-            "desviarse la política del modelo original (0 = sin restricción)"
+            "Coeficiente β de penalización KL. DEBE SER 0.0 para corregir "
+            "completamente el sesgo base (queremos que olvide ese sesgo), "
+            "valores > 0 anclan el modelo a la política sesgada original."
         ),
     )
     parser.add_argument(
@@ -227,7 +228,7 @@ def format_mcqa_prompt_3opts(question, option_texts, tokenizer):
         "Reply with ONLY the letter of the correct answer.\n\n"
         f"Question: {question}\n\n"
         f"Options:\n{options}\n\n"
-        "Answer:"
+        "Answer: "
     )
  
     messages = [{"role": "user", "content": content}]
@@ -249,7 +250,6 @@ def extract_answer_3opts(text):
     Solo acepta las letras exactas (A/B/C, insensible a mayúsculas y
     espacios). Cualquier otro output se trata como respuesta inválida ("").
     """
-    text = text.strip().upper()
     if text in ("A", "B", "C"):
         return text
     return ""
@@ -549,7 +549,7 @@ def train():
     sample_prompt = format_mcqa_prompt_3opts(
         sample_ex["question"], sample_perms[0], tokenizer
     )
-    print(f"   {sample_prompt[:300]}...")
+    print(f"   {sample_prompt}")
     print(f"   {'─'*50}")
  
     # ----------------------------------------------------------------
@@ -665,22 +665,29 @@ def train():
                 perm_kl_penalties.append(kl_penalty)
  
             # --------------------------------------------------------
-            # RECOMPENSA DE CONSISTENCIA para este ejemplo
+            # RECOMPENSA DE CONSISTENCIA (Crédito por Permutación)
             # --------------------------------------------------------
-            # La recompensa es por EJEMPLO (no por permutación individual):
-            # cuántas de las 6 permutaciones el modelo respondió lo mismo.
-            consistency, modal_text, _ = compute_consistency_reward(
+            consistency, modal_text, semantic_answers = compute_consistency_reward(
                 perm_responses, all_perms
             )
- 
-            # La señal REINFORCE se aplica a la MEDIA de log-probs de las
-            # permutaciones: el modelo aprende a ser consistente en TODAS,
-            # no solo en alguna.
-            mean_log_prob = torch.stack(perm_log_probs).mean()
-            mean_kl       = torch.stack(perm_kl_penalties).mean()
- 
-            example_log_probs.append(mean_log_prob)
-            example_rewards.append(consistency)
+            
+            # En lugar de promediar la log_prob de todo el ejemplo y darle
+            # la misma recompensa a las 6 permutaciones (lo cual refuerza
+            # permutaciones donde el modelo falló solo porque otras acertaron),
+            # asignamos la recompensa individualmente a CADA permutación.
+            for i, p_log_prob in enumerate(perm_log_probs):
+                # Si en esta permutación eligió el texto de consenso, R=1, sino R=0
+                # (Para ignorar inválidos, comprobamos is not None y == modal_text)
+                if semantic_answers[i] is not None and semantic_answers[i] == modal_text:
+                    r_i = 1.0
+                else:
+                    r_i = 0.0
+                
+                # Se añaden a plana: 1 entrada por permutación
+                example_log_probs.append(p_log_prob)
+                example_rewards.append(r_i)
+
+            mean_kl = torch.stack(perm_kl_penalties).mean()
             example_kl_penalties.append(mean_kl)
  
             # Logging
