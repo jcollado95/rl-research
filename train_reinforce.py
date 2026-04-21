@@ -69,7 +69,7 @@ def parse_args():
     )
     parser.add_argument(
         "--model_name", type=str,
-        default="HuggingFaceTB/SmolLM2-135M-Instruct",
+        default="Qwen/Qwen3-0.6B",
         help="Nombre del modelo en HuggingFace Hub",
     )
     parser.add_argument(
@@ -236,6 +236,7 @@ def format_mcqa_prompt_3opts(question, option_texts, tokenizer):
         messages,
         tokenize=False,
         add_generation_prompt=True,
+        enable_thinking=False
     )
     return prompt
 

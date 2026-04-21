@@ -31,7 +31,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluar modelo: sesgo posicional y consistencia")
     parser.add_argument(
         "--model_name", type=str, 
-        default="HuggingFaceTB/SmolLM2-135M-Instruct"
+        default="Qwen/Qwen3-0.6B"
     )
     parser.add_argument(
         "--adapter_path", type=str, default=None, 
