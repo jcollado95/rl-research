@@ -138,14 +138,88 @@ La métrica principal optimizada es el `Consistency score`:
 ## Estructura del proyecto
 
 ```
-rl-learn/
-├── README.md              ← Este archivo
-├── requirements.txt       ← Dependencias (torch, transformers, peft, ...)
-├── train_reinforce.py     ← Script principal de entrenamiento
-└── output/                ← (creado al entrenar)
-    ├── best_adapter/      ← Mejor adaptador LoRA (solo pesos del adaptador)
-    ├── final_adapter/     ← Adaptador LoRA final
-    └── metrics.json       ← Métricas de entrenamiento
+rl-research/
+├── README.md                 ← Este archivo
+├── requirements.txt          ← Dependencias (torch, transformers, peft, matplotlib, ...)
+├── train_reinforce.py        ← Script principal de entrenamiento
+├── evaluate_models.py        ← Script de evaluación detallada
+├── visualize_results.py      ← Visualización de resultados de un experimento
+├── compare_experiments.py    ← Comparación de múltiples experimentos
+├── train.sbs                 ← Script SLURM para lanzar entrenamiento
+└── experiments/              ← (creado automáticamente al entrenar)
+    └── 2026-04-23_11-08_bs4_lr5e-06/    ← un experimento
+        ├── config.json           ← Args, git hash, timestamp, versiones
+        ├── metrics.json          ← Métricas paso a paso (con eval periódico)
+        ├── summary.json          ← Resumen: métricas iniciales/finales, wall-clock
+        ├── best_adapter/         ← Mejor adaptador LoRA (por consistency)
+        ├── final_adapter/        ← Adaptador LoRA final
+        ├── eval/                 ← Resultados de evaluación
+        │   ├── eval_base.json
+        │   └── eval_trained.json
+        └── plots/                ← Gráficas (generadas por visualize_results.py)
+            ├── training_curves.png
+            └── eval_comparison.png
+```
+
+## Tracking & Reproducibilidad
+
+Cada ejecución de `train_reinforce.py` crea automáticamente un directorio con
+nombre `YYYY-MM-DD_HH-MM_bs{batch_size}_lr{lr}` que contiene:
+
+- **`config.json`**: Todos los argumentos de la CLI, hash de git, versiones de
+  Python/PyTorch/CUDA.
+- **`metrics.json`**: Métricas por paso. Cuando se ejecuta evaluación periódica,
+  las métricas de validación (consistency, modal accuracy, overall accuracy) se
+  incluyen en el mismo registro del paso.
+- **`summary.json`**: Resumen con métricas iniciales, finales, mejor consistency,
+  y tiempo total de entrenamiento.
+
+## Visualización
+
+### Gráficas de un experimento
+
+```bash
+# Mostrar gráficas interactivas
+python visualize_results.py experiments/2026-04-23_11-08_bs4_lr5e-06/
+
+# Guardar como PNG
+python visualize_results.py experiments/2026-04-23_11-08_bs4_lr5e-06/ --save
+
+# Guardar como PDF (para papeles)
+python visualize_results.py experiments/2026-04-23_11-08_bs4_lr5e-06/ --save --format pdf
+```
+
+Genera:
+- **Training curves** (multi-panel): loss, consistency, modal accuracy, KL, grad norm
+  con curvas suavizadas (EMA) y datos crudos de fondo
+- **Evaluation comparison**: Bar chart (base vs entrenado) + sesgo posicional
+
+### Comparación de múltiples experimentos
+
+```bash
+# Tabla comparativa en terminal
+python compare_experiments.py experiments/exp_1/ experiments/exp_2/
+
+# Con gráficas superpuestas guardadas
+python compare_experiments.py experiments/2026-*/ --save
+
+# Exportar tabla LaTeX para tu paper
+python compare_experiments.py experiments/2026-*/ --latex
+python compare_experiments.py experiments/2026-*/ --latex --latex-output tabla.tex
+```
+
+## Evaluación
+
+```bash
+# Evaluar modelo base
+python evaluate_models.py --model_name Qwen/Qwen3-0.6B
+
+# Evaluar modelo entrenado (guardando en directorio del experimento)
+python evaluate_models.py \
+    --model_name Qwen/Qwen3-0.6B \
+    --adapter_path experiments/2026-04-23_11-08_bs4_lr5e-06/best_adapter \
+    --experiment_dir experiments/2026-04-23_11-08_bs4_lr5e-06/ \
+    --output_file eval_trained.json
 ```
 
 ## Siguientes pasos

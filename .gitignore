@@ -1,7 +1,9 @@
 # Custom
 output_accuracy/
 output_consistency/
-results/
+eval/
+experiments/
+slurm-out/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

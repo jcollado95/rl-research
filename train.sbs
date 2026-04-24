@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#SBATCH --job-name=pipo
+#SBATCH --partition=normal
+#SBATCH --nodes=1
+#SBATCH --time=99:00:00
+#SBATCH --ntasks=1
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:rtx:1
+## SBATCH --nodelist=nodo05
+#SBATCH --output="slurm-out/exp-%A_%a.out"
+#SBATCH --error="slurm-out/exp-%A_%a.err"
+
+# Limpieza de módulos cargados
+module purge
+
+# Activación de entorno virtual
+source venv/bin/activate
+
+# Ejecución del script
+python train_reinforce.py --model_name /mnt/beegfs/sinai-data/Qwen/Qwen3-0.6B --dataset_name /mnt/beegfs/jcollado/hf-datasets/commonsense_qa

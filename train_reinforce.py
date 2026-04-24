@@ -46,9 +46,13 @@ Formulación matemática:
 """
 
 import os
+import sys
 import json
+import time
 import random
 import argparse
+import platform
+import subprocess
 from itertools import permutations
 from datetime import datetime
 from collections import Counter
@@ -70,17 +74,22 @@ def parse_args():
     parser.add_argument(
         "--model_name", type=str,
         default="Qwen/Qwen3-0.6B",
-        help="Nombre del modelo en HuggingFace Hub",
+        help="Nombre del modelo en HuggingFace Hub o path local",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=4,
+        "--dataset_name", type=str,
+        default="commonsense_qa",
+        help="Nombre del dataset en HuggingFace Hub o path local",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=8,
         help=(
             "Ejemplos por paso. NOTA: cada ejemplo genera 6 permutaciones, "
             "así que el coste efectivo es batch_size × 6 generaciones."
         ),
     )
     parser.add_argument(
-        "--num_steps", type=int, default=500,
+        "--num_steps", type=int, default=1000,
         help="Número total de pasos de entrenamiento",
     )
     parser.add_argument(
@@ -88,11 +97,11 @@ def parse_args():
         help="Learning rate del optimizador",
     )
     parser.add_argument(
-        "--temperature", type=float, default=0.8,
+        "--temperature", type=float, default=0.7,
         help="Temperatura para el muestreo durante la generación",
     )
     parser.add_argument(
-        "--eval_every", type=int, default=50,
+        "--eval_every", type=int, default=100,
         help="Evaluar en validación cada N pasos",
     )
     parser.add_argument(
@@ -104,8 +113,8 @@ def parse_args():
         help="Semilla aleatoria para reproducibilidad",
     )
     parser.add_argument(
-        "--output_dir", type=str, default="./output_consistency",
-        help="Directorio para guardar el modelo entrenado y métricas",
+        "--output_dir", type=str, default="./experiments",
+        help="Directorio padre para experimentos (se crea un subdirectorio con fecha automáticamente)",
     )
     parser.add_argument(
         "--gradient_clip", type=float, default=1.0,
@@ -394,7 +403,7 @@ def compute_log_prob_and_kl(model, full_ids, prompt_length):
 @torch.no_grad()
 def evaluate(model, tokenizer, dataset, device, num_samples=200):
     """
-    Evalúa el modelo en dos dimensiones sobre un subconjunto del dataset:
+    Evalúa el modelo en cuatro dimensiones sobre un subconjunto del dataset:
  
     1. Consistency score: recompensa de consistencia media (métrica principal,
        la que estamos optimizando).
@@ -402,6 +411,15 @@ def evaluate(model, tokenizer, dataset, device, num_samples=200):
     2. Modal accuracy: fracción de ejemplos donde la respuesta modal del modelo
        (la que elige con más frecuencia entre permutaciones) coincide con la
        respuesta correcta. Métrica secundaria de monitoreo.
+
+    3. Overall accuracy: fracción de permutaciones individuales donde el modelo
+       eligió la respuesta correcta. A diferencia de modal accuracy, cada
+       permutación se evalúa independientemente (no se agrega por pregunta).
+
+    4. Perfect accuracy: fracción de ejemplos donde el modelo fue perfectamente
+       consistente (6/6 permutaciones iguales) Y además acertó la respuesta
+       correcta. Es la métrica más exigente: mide que el modelo no pierde
+       conocimiento a la vez que elimina el sesgo posicional.
  
     Usa decodificación greedy (do_sample=False) para evaluación determinista.
     """
@@ -414,6 +432,9 @@ def evaluate(model, tokenizer, dataset, device, num_samples=200):
  
     total_consistency = 0.0
     total_modal_correct = 0
+    total_perfect_correct = 0
+    total_perm_correct = 0
+    total_perms = 0
     total = 0
  
     for idx in indices:
@@ -447,22 +468,36 @@ def evaluate(model, tokenizer, dataset, device, num_samples=200):
             responses.append(extract_answer_3opts(generated_text))
  
         # Calcular consistencia
-        consistency, modal_text, _ = compute_consistency_reward(
+        consistency, modal_text, semantic_answers = compute_consistency_reward(
             responses, all_perms
         )
         total_consistency += consistency
  
         # Comprobar si la moda coincide con la respuesta correcta
-        if modal_text == correct_text:
+        is_modal_correct = (modal_text == correct_text)
+        if is_modal_correct:
             total_modal_correct += 1
+
+        # Perfect accuracy: consistencia perfecta (6/6) Y respuesta correcta
+        is_perfectly_consistent = (consistency == 1.0)
+        if is_modal_correct and is_perfectly_consistent:
+            total_perfect_correct += 1
+
+        # Overall accuracy: cada permutación se evalúa independientemente
+        for sem_ans in semantic_answers:
+            total_perms += 1
+            if sem_ans == correct_text:
+                total_perm_correct += 1
  
         total += 1
  
     model.train()
  
-    mean_consistency = total_consistency / total if total > 0 else 0.0
-    modal_accuracy   = total_modal_correct / total if total > 0 else 0.0
-    return mean_consistency, modal_accuracy
+    mean_consistency  = total_consistency / total if total > 0 else 0.0
+    modal_accuracy    = total_modal_correct / total if total > 0 else 0.0
+    overall_accuracy  = total_perm_correct / total_perms if total_perms > 0 else 0.0
+    perfect_accuracy  = total_perfect_correct / total if total > 0 else 0.0
+    return mean_consistency, modal_accuracy, overall_accuracy, perfect_accuracy
 
 
 # ============================================================================
@@ -531,12 +566,18 @@ def train():
     # ----------------------------------------------------------------
     # Cargar dataset
     # ----------------------------------------------------------------
-    print("\n📚 Cargando dataset CommonsenseQA...")
-    dataset   = load_dataset("commonsense_qa")
-    train_data = dataset["train"]
+    print(f"\n📚 Cargando dataset {args.dataset_name}...")
+    dataset   = load_dataset(args.dataset_name)
+    
+    # Dividir el conjunto de entrenamiento para validación interna (evita data leakage)
+    train_split = dataset["train"].train_test_split(test_size=0.1, seed=args.seed)
+    train_data = train_split["train"]
+    internal_val_data = train_split["test"]
+    
     val_data   = dataset["validation"]
-    print(f"   Train: {len(train_data):,} ejemplos")
-    print(f"   Validation: {len(val_data):,} ejemplos")
+    print(f"   Train (training): {len(train_data):,} ejemplos")
+    print(f"   Validation interna (selección): {len(internal_val_data):,} ejemplos")
+    print(f"   Validation externa (eval inicial/final): {len(val_data):,} ejemplos")
  
     # Mostrar un ejemplo de cómo se construyen las permutaciones
     sample_ex = train_data[0]
@@ -562,19 +603,55 @@ def train():
         weight_decay=0.01,
     )
  
-    os.makedirs(args.output_dir, exist_ok=True)
+    # ----------------------------------------------------------------
+    # Crear directorio de experimento con nombre basado en fecha+config
+    # ----------------------------------------------------------------
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    exp_name = f"{timestamp}_bs{args.batch_size}_lr{args.lr}"
+    experiment_dir = os.path.join(args.output_dir, exp_name)
+    os.makedirs(experiment_dir, exist_ok=True)
+    os.makedirs(os.path.join(experiment_dir, "eval"), exist_ok=True)
+    print(f"\n📂 Directorio del experimento: {experiment_dir}")
+
+    # Guardar snapshot de configuración
+    git_hash = None
+    try:
+        git_hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        pass
+
+    config_snapshot = {
+        "timestamp": datetime.now().isoformat(),
+        "args": vars(args),
+        "git_hash": git_hash,
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "cuda_available": torch.cuda.is_available(),
+        "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    }
+    config_path = os.path.join(experiment_dir, "config.json")
+    with open(config_path, "w") as f:
+        json.dump(config_snapshot, f, indent=2)
+    print(f"   Configuración guardada en: {config_path}")
+
     metrics_log = []
+    train_start_time = time.time()
  
     # ----------------------------------------------------------------
     # Evaluación inicial
     # ----------------------------------------------------------------
     print("\n📊 Evaluación INICIAL (antes de entrenar)...")
-    init_consistency, init_modal_acc = evaluate(
+    init_consistency, init_modal_acc, init_overall_acc, init_perfect_acc = evaluate(
         model, tokenizer, val_data, device,
         num_samples=args.eval_samples,
     )
     print(f"   Consistency score:  {init_consistency:.4f}")
     print(f"   Modal accuracy:     {init_modal_acc:.2%}")
+    print(f"   Overall accuracy:   {init_overall_acc:.2%}")
+    print(f"   Perfect accuracy:   {init_perfect_acc:.2%}")
     print()
  
     # ----------------------------------------------------------------
@@ -780,17 +857,25 @@ def train():
         # Evaluación periódica
         # ============================================================
         if step % args.eval_every == 0:
-            print(f"\n  📊 Evaluación en paso {step}...")
-            val_consistency, val_modal_acc = evaluate(
-                model, tokenizer, val_data, device,
+            print(f"\n  📊 Evaluación en paso {step} (con validación interna)...")
+            val_consistency, val_modal_acc, val_overall_acc, val_perfect_acc = evaluate(
+                model, tokenizer, internal_val_data, device,
                 num_samples=args.eval_samples,
             )
             print(f"     Consistency score (val): {val_consistency:.4f}")
             print(f"     Modal accuracy    (val): {val_modal_acc:.2%}")
- 
+            print(f"     Overall accuracy  (val): {val_overall_acc:.2%}")
+            print(f"     Perfect accuracy  (val): {val_perfect_acc:.2%}")
+
+            # Añadir métricas de evaluación al último registro de metrics_log
+            metrics["val_consistency"] = val_consistency
+            metrics["val_modal_accuracy"] = val_modal_acc
+            metrics["val_overall_accuracy"] = val_overall_acc
+            metrics["val_perfect_accuracy"] = val_perfect_acc
+
             if val_consistency > best_consistency:
                 best_consistency = val_consistency
-                save_path = os.path.join(args.output_dir, "best_adapter")
+                save_path = os.path.join(experiment_dir, "best_adapter")
                 model.save_pretrained(save_path)
                 tokenizer.save_pretrained(save_path)
                 print(f"     ✅ Mejor modelo guardado en {save_path}")
@@ -803,7 +888,7 @@ def train():
     print(f"  📊 RESULTADOS FINALES")
     print(f"{'='*70}")
  
-    final_consistency, final_modal_acc = evaluate(
+    final_consistency, final_modal_acc, final_overall_acc, final_perfect_acc = evaluate(
         model, tokenizer, val_data, device,
         num_samples=args.eval_samples,
     )
@@ -813,19 +898,49 @@ def train():
     print(f"  Mejor consistency (val):    {best_consistency:.4f}")
     print(f"  Modal accuracy INICIAL:     {init_modal_acc:.2%}")
     print(f"  Modal accuracy FINAL:       {final_modal_acc:.2%}")
+    print(f"  Overall accuracy INICIAL:   {init_overall_acc:.2%}")
+    print(f"  Overall accuracy FINAL:     {final_overall_acc:.2%}")
+    print(f"  Perfect accuracy INICIAL:   {init_perfect_acc:.2%}")
+    print(f"  Perfect accuracy FINAL:     {final_perfect_acc:.2%}")
     print(f"{'='*70}")
  
     # Guardar adaptador final
-    final_path = os.path.join(args.output_dir, "final_adapter")
+    final_path = os.path.join(experiment_dir, "final_adapter")
     model.save_pretrained(final_path)
     tokenizer.save_pretrained(final_path)
     print(f"\n  💾 Adaptador LoRA final guardado en: {final_path}")
  
     # Guardar métricas
-    metrics_path = os.path.join(args.output_dir, "metrics.json")
+    metrics_path = os.path.join(experiment_dir, "metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics_log, f, indent=2)
     print(f"  📈 Métricas guardadas en: {metrics_path}")
+
+    # Guardar resumen del experimento
+    train_elapsed = time.time() - train_start_time
+    summary = {
+        "experiment_dir": experiment_dir,
+        "total_steps": args.num_steps,
+        "wall_clock_seconds": round(train_elapsed, 1),
+        "wall_clock_human": f"{int(train_elapsed // 3600)}h {int((train_elapsed % 3600) // 60)}m {int(train_elapsed % 60)}s",
+        "initial_metrics": {
+            "consistency": init_consistency,
+            "modal_accuracy": init_modal_acc,
+            "overall_accuracy": init_overall_acc,
+            "perfect_accuracy": init_perfect_acc,
+        },
+        "final_metrics": {
+            "consistency": final_consistency,
+            "modal_accuracy": final_modal_acc,
+            "overall_accuracy": final_overall_acc,
+            "perfect_accuracy": final_perfect_acc,
+        },
+        "best_consistency": best_consistency,
+    }
+    summary_path = os.path.join(experiment_dir, "summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"  📋 Resumen del experimento: {summary_path}")
  
  
 # ============================================================================

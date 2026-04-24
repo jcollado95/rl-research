@@ -38,6 +38,11 @@ def parse_args():
         help="Ruta al adaptador LoRA (si no se proporciona se evaluará el modelo original)"
     )
     parser.add_argument(
+        "--dataset_name", type=str,
+        default="commonsense_qa",
+        help="Nombre del dataset en HuggingFace Hub o path local",
+    )
+    parser.add_argument(
         "--split", type=str, default="validation", 
         help="Split del dataset a evaluar (train, validation, test)"
     )
@@ -46,7 +51,10 @@ def parse_args():
         help="Límite máximo de muestras a evaluar. Por defecto evalúa todo el split."
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output_file", type=str, default="eval_results.json")
+    parser.add_argument(
+        "--output_file", type=str, default=None,
+        help="Nombre del archivo de salida. Si no se indica, se autogenera basado en el modelo y el adaptador."
+    )
     return parser.parse_args()
 
 def main():
@@ -232,10 +240,32 @@ def main():
         "details": results
     }
     
-    with open(f"results/{args.output_file}", "w", encoding="utf-8") as f:
+    if args.output_file is not None:
+        out_path = args.output_file
+        # Asegurar que el directorio parent existe
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    else:
+        model_basename = os.path.basename(os.path.normpath(args.model_name))
+        if args.adapter_path:
+            # Typical adapter path: experiments/2026-04.../best_adapter
+            adapter_dir = os.path.dirname(os.path.normpath(args.adapter_path))
+            adapter_id = os.path.basename(adapter_dir)
+            if not adapter_id or adapter_id == ".":
+                adapter_id = os.path.basename(os.path.normpath(args.adapter_path))
+                
+            out_filename = f"eval_{model_basename}_{adapter_id}.json"
+            out_dir = os.path.join(adapter_dir, "eval")
+        else:
+            out_filename = f"eval_{model_basename}_base.json"
+            out_dir = "./eval"
+            
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, out_filename)
+    
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(report_data, f, indent=4, ensure_ascii=False)
         
-    print(f"💾 Se han guardado detalles completos por permutación en: results/{args.output_file}")
+    print(f"💾 Se han guardado detalles completos por permutación en: {out_path}")
 
 if __name__ == "__main__":
     main()
