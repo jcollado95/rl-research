@@ -235,10 +235,7 @@ Una vez entiendas REINFORCE, puedes explorar métodos más avanzados:
 3. **GRPO** (Group Relative Policy Optimization): Similar a REINFORCE pero usa
    normalización por grupo de las ventajas. Es el método usado por DeepSeek.
 
-4. **PPO** (Proximal Policy Optimization): Añade clipping del ratio de políticas
-   y un modelo crítico para estimar la ventaja. Más estable pero más complejo.
-
-5. ~~**LoRA**~~: ✅ **Implementado** — Adaptación de bajo rango con `peft`.
+4. ~~**LoRA**~~: ✅ **Implementado** — Adaptación de bajo rango con `peft`.
    El modelo base congelado sirve simultáneamente como π_ref para KL.
 
 ## Referencias

@@ -344,7 +344,11 @@ def generate_response(model, input_ids, attention_mask, temperature):
         max_new_tokens=1,
         do_sample=True,
         temperature=temperature,
-        pad_token_id=model.config.eos_token_id,
+        pad_token_id=(
+            model.config.eos_token_id[0]
+            if isinstance(model.config.eos_token_id, list)
+            else model.config.eos_token_id
+        ),
     )
     return output_ids
 
@@ -459,7 +463,11 @@ def evaluate(model, tokenizer, dataset, device, num_samples=200):
                 attention_mask=attention_mask,
                 max_new_tokens=1,
                 do_sample=False,           # Greedy para evaluación
-                pad_token_id=model.config.eos_token_id,
+                pad_token_id=(
+                    model.config.eos_token_id[0]
+                    if isinstance(model.config.eos_token_id, list)
+                    else model.config.eos_token_id
+                ),
             )
             generated_token = output_ids[:, input_ids.shape[1]:]
             generated_text = tokenizer.decode(

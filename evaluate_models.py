@@ -142,7 +142,11 @@ def main():
                     attention_mask=attention_mask,
                     max_new_tokens=1,
                     do_sample=False,  # Greedy estricto, no exploración.
-                    pad_token_id=model.config.eos_token_id,
+                    pad_token_id=(
+                        model.config.eos_token_id[0]
+                        if isinstance(model.config.eos_token_id, list)
+                        else model.config.eos_token_id
+                    ),
                 )
                 
             generated_token = output_ids[:, input_ids.shape[1]:]
