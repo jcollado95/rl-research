@@ -1,0 +1,19 @@
+{
+  "experiment_dir": "./experiments/2026-04-23_12-55_bs8_lr5e-06",
+  "total_steps": 1000,
+  "wall_clock_seconds": 13230.4,
+  "wall_clock_human": "3h 40m 30s",
+  "initial_metrics": {
+    "consistency": 0.6958333333333333,
+    "modal_accuracy": 0.79,
+    "overall_accuracy": 0.5933333333333334,
+    "perfect_accuracy": 0.255
+  },
+  "final_metrics": {
+    "consistency": 0.8983333333333334,
+    "modal_accuracy": 0.705,
+    "overall_accuracy": 0.7008333333333333,
+    "perfect_accuracy": 0.54
+  },
+  "best_consistency": 0.9050000000000002
+}

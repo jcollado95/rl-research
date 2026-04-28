@@ -1,8 +1,6 @@
 # Custom
 output_accuracy/
 output_consistency/
-eval/
-experiments/
 slurm-out/
 
 # Byte-compiled / optimized / DLL files

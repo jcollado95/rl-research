@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-04-27T14:05:00.859635",
+  "args": {
+    "model_name": "/mnt/beegfs/sinai-data/google/gemma-3-1b-it/",
+    "dataset_name": "/mnt/beegfs/jcollado/hf-datasets/commonsense_qa/",
+    "batch_size": 8,
+    "num_steps": 1000,
+    "lr": 5e-06,
+    "temperature": 0.7,
+    "eval_every": 100,
+    "eval_samples": 200,
+    "seed": 42,
+    "output_dir": "./experiments",
+    "gradient_clip": 1.0,
+    "kl_coeff": 0.0,
+    "lora_rank": 16,
+    "lora_alpha": 32,
+    "force_cpu": false
+  },
+  "git_hash": "2a98f5ed1666fbcbfe16c183894d5a7755cb519a",
+  "python_version": "3.11.4",
+  "torch_version": "2.11.0+cu126",
+  "cuda_available": true,
+  "cuda_device": "Tesla V100-PCIE-32GB"
+}
